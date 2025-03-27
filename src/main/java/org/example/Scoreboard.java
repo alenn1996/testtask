@@ -4,98 +4,111 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
-
-
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+//I created scorebord assuming that getSUmmary would be most called method, there wont be many matches and therefore there wont be
+//many calls to updateMatch so getSUmmary would be more called then updateMatch.Since on Wc matches usually starts at the same time
+//i added a simple multithreading as well.In case of more matches that start at the same time i would have probably went with
+//hashmap of locks instead of single lock.
 public class Scoreboard {
     private static final Logger logger = LoggerFactory.getLogger(Scoreboard.class);
-    //task could have been done only by using machesMap but by adding Treeset  we ensured that at any given moment we have sorted matches
-    //more details in readme
-    private final TreeSet<Match> matches;
-    private final Map<Integer, Match> matchesMap;
-    private final Lock lock;
-    private int matchCounter;
-    //this set has been done as an extra measure to prevent adding the same match 2 times
-    private final Set<String> activeMatches; //
+    private final TreeSet<Match> matches; //needed since getSummary would be pretty often called. Therefore it is useful to have always sorted matches
+    private final Map<Integer, Match> matchesMap; //actually the only structure ever needed in this task.We could have used it for sorting and
+    //other operations however other structures ensured greater efficiency
+    private final Set<String> activeMatches; //here in case someone attempts to add multiple matches at the same time.
+    //could have done this by iterating through map but this is more efficient
+    private final AtomicInteger matchCounter; // used to determine matchId
+    private volatile List<String> cachedSummary; // Volatile for thread safety. Simple caching so in case of no results we can immediately
+    //handle the result without iterating through treeset matches
+    private final ReadWriteLock lock;
 
     public Scoreboard() {
         matches = new TreeSet<>(new MatchComparator());
         matchesMap = new HashMap<>();
-        lock = new ReentrantLock();
-        matchCounter = 0;
         activeMatches = new HashSet<>();
+        matchCounter = new AtomicInteger(0);
+        cachedSummary = Collections.emptyList();
+        lock = new ReentrantReadWriteLock();
     }
 
     public int startMatch(String homeTeam, String awayTeam) {
-        lock.lock();
+        lock.writeLock().lock();
         try {
-            String matchDescription = homeTeam + "-" + awayTeam;
-            if (activeMatches.contains(matchDescription)) {
-                //attempting to add already existing match throw exception
+            String matchKey = createMatchKey(homeTeam, awayTeam);
+            if (activeMatches.contains(matchKey)) {
+                logger.warn("Attempted to start duplicate match: {} : {}", homeTeam, awayTeam);
                 throw new IllegalArgumentException("Match " + homeTeam + " : " + awayTeam + " is already in progress");
             }
-            matchCounter++;
-            Match match = new Match(matchCounter, homeTeam, awayTeam);
+            int matchId = matchCounter.incrementAndGet();
+            Match match = new Match(matchId, homeTeam, awayTeam);
             matches.add(match);
-            matchesMap.put(matchCounter, match);
-
-            activeMatches.add(matchDescription); // add to active matches
-            logger.debug("Started match {}: {} vs {}, added to TreeSet", matchCounter, homeTeam, awayTeam);
-            return matchCounter;
+            matchesMap.put(matchId, match);
+            activeMatches.add(matchKey);
+            updateCachedSummary();
+            logger.debug("Started match {}: {} vs {}", matchId, homeTeam, awayTeam);
+            return matchId;
         } finally {
-            lock.unlock();
+            lock.writeLock().unlock();
         }
     }
 
     public void updateScore(int matchId, int homeGoals, int awayGoals) {
-        lock.lock();
+        lock.writeLock().lock();
         try {
             Match match = matchesMap.get(matchId);
             if (match == null) {
-                //attempting to update score of non existent match throw exception
+                logger.warn("Attempted to update non-existent match with id {}", matchId);
                 throw new IllegalArgumentException("There is no ongoing match with id " + matchId);
             }
             matches.remove(match);
             match.updateScore(homeGoals, awayGoals);
             matches.add(match);
-            logger.debug("Updated match {}:  new score={}", matchId, match);
+            updateCachedSummary();
+            logger.debug("Score changed on match {}: new score={}", matchId, match);
         } finally {
-            lock.unlock();
+            lock.writeLock().unlock();
         }
     }
 
     public void finishMatch(int matchId) {
-        lock.lock();
+        lock.writeLock().lock();
         try {
-            Match match = matchesMap.get(matchId);
-            if (match == null) {
-                //there is no ongoing match throw exception
-                throw new IllegalArgumentException("There is no ongoing match with id " + matchId);
+            Match match = matchesMap.remove(matchId);
+            if (match != null) {
+                matches.remove(match);
+                activeMatches.remove(createMatchKey(match.getHomeTeam(), match.getAwayTeam()));
+                updateCachedSummary();
+                logger.debug("Finished match {}", matchId);
+            } else {
+                logger.warn("Attempted to finish non-existent match with id {}", matchId);
+                throw new IllegalArgumentException("There is no ongoing match with id "+ matchId);
+
             }
-            //remove match from hashset hashmap and treeset
-            matches.remove(match);
-            String matchDescription = match.getHomeTeam() + "-" + match.getAwayTeam();
-            activeMatches.remove(matchDescription);
-            matchesMap.remove(matchId);
-            logger.debug("Finished match {}", matchId);
         } finally {
-            lock.unlock();
+            lock.writeLock().unlock();
         }
     }
 
     public List<String> getSummary() {
-        lock.lock();
+        lock.readLock().lock();
         try {
-            List<String> summary = new ArrayList<>();
-            int counter = 1;
-            for (Match match : matches) {
-                summary.add(String.format("%d. %s", counter++, match.toString()));
-            }
-            logger.debug("Summary size: {}, matches size: {}", summary.size(), matches.size());
-            return summary;
+            return cachedSummary;
         } finally {
-            lock.unlock();
+            lock.readLock().unlock();
         }
+    }
+
+    private void updateCachedSummary() {
+        List<String> summary = new ArrayList<>(matches.size());
+        int counter = 1;
+        for (Match match : matches) {
+            summary.add(String.format("%d. %s", counter++, match.toString()));
+        }
+        cachedSummary = Collections.unmodifiableList(summary);
+    }
+
+    private String createMatchKey(String homeTeam, String awayTeam) {
+        return homeTeam + "--" + awayTeam;
     }
 }

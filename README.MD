@@ -17,7 +17,7 @@ This approach guarantees a deterministic sort order, even under concurrent match
 3. Scoreboard - Core Data Structure
 The Scoreboard class includes the following components:
 Required Fields:
-•	private int matchCounter:
+•	private final AtomicInteger matchCounter:
 Tracks the total number of matches and generates unique matchId values.
 •	private Map<Integer, Match> matchesMap:
 Hashmap where we store all matches.Key is matchId whereas value is the Match. We could have went with approach where key is something like homeTeamvsawayTeam and then we would not need private TreeSet<Match> matches and private Set<String> activeMatches . However hashing of strings is much slower comparing to hashing of numbers and we need numbers (matchId) anyway for cases where 2 matches start at exactly the same time finish with the same result so we have something based on what we could perform sort
@@ -28,6 +28,8 @@ o	Trade-offs:
 	Cons: Updates in updateMatch are slower (requires removal, modification, and re-insertion). If updates were more frequent than getSummary calls, I’d consider using only matchesMap and sorting on demand.
 o	Alternative: Sorting matchesMap values each time getSummary is called was an option, but this would sacrifice efficiency for a commonly used operation.
 Additional Fields:
+• cachedSummary:
+This list serves as simple cache implementation. By using it we dont have to iterate through treeset each time getSummary is called
 •	Lock:
 Included to ensure thread safety in a multithreaded environment, even though this wasn’t explicitly required in the task. 
 •	private Set<String> activeMatches:
