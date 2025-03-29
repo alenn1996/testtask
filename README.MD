@@ -20,7 +20,7 @@ Required Fields:
 •	private final AtomicInteger matchCounter:
 Tracks the total number of matches and generates unique matchId values.
 •	private Map<Integer, Match> matchesMap:
-Hashmap where we store all matches.Key is matchId whereas value is the Match. We could have went with approach where key is something like homeTeamvsawayTeam and then we would not need private TreeSet<Match> matches and private Set<String> activeMatches . However hashing of strings is much slower comparing to hashing of numbers and we need numbers (matchId) anyway for cases where 2 matches start at exactly the same time finish with the same result so we have something based on what we could perform sort
+Hashmap where we store all matches.Key is matchId whereas value is the Match. We could have went with approach where key is something like homeTeamvsawayTeam and then we would not need private TreeSet<Match> matches . However hashing of strings is much slower comparing to hashing of numbers and we need numbers (matchId) anyway for cases where 2 matches start at exactly the same time finish with the same result so we have something based on what we could perform sort
 •	private TreeSet<Match> matches:
 A TreeSet maintaining a sorted collection of matches based on MatchComparator. 
 o	Trade-offs: 
